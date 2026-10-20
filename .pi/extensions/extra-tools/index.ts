@@ -18,6 +18,9 @@ function webSignal(signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
+const opaqueUuid = /^[\da-f]{8}-[\da-f]{4}-[47][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
+const sessionEntryType = "little-coder:parallel-session";
+
 export default function (pi: ExtensionAPI) {
   const customSessionIds = new WeakMap<object, string>();
   function parallelSessionId(ctx: ExtensionContext): string {
@@ -25,9 +28,26 @@ export default function (pi: ExtensionAPI) {
     if (!header) throw new Error("Cannot identify the current pi session");
     // pi's default UUID survives resumes. Custom --session-id labels can contain
     // personal text or exceed the MCP limit, so give those headers opaque IDs.
-    if (/^[\da-f]{8}-[\da-f]{4}-[47][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(header.id)) return header.id;
+    if (opaqueUuid.test(header.id)) return header.id;
     let id = customSessionIds.get(header);
-    if (!id) { id = randomUUID(); customSessionIds.set(header, id); }
+    if (!id) {
+      // Read the whole session tree so compaction/branch navigation cannot lose
+      // the ID. Forks copy entries, so only reuse metadata owned by this header.
+      for (const entry of ctx.sessionManager.getEntries()) {
+        if (entry.type !== "custom" || entry.customType !== sessionEntryType) continue;
+        const saved = entry.data as { sessionId?: string; timestamp?: string; id?: string } | undefined;
+        if (saved?.sessionId === header.id && saved.timestamp === header.timestamp &&
+            typeof saved.id === "string" && opaqueUuid.test(saved.id)) {
+          id = saved.id;
+          break;
+        }
+      }
+      if (!id) {
+        id = randomUUID();
+        pi.appendEntry(sessionEntryType, { sessionId: header.id, timestamp: header.timestamp, id });
+      }
+      customSessionIds.set(header, id);
+    }
     return id;
   }
 
@@ -82,6 +102,7 @@ export default function (pi: ExtensionAPI) {
             throw new Error("Parallel webfetch requires an HTTP or HTTPS URL");
           }
           const { parallelTool } = await import("./parallel.ts");
+          requestSignal.throwIfAborted();
           return await parallelTool("web_fetch", {
             urls: [url],
             ...(prompt ? { objective: prompt.slice(0, 200) } : {}),
@@ -134,6 +155,7 @@ export default function (pi: ExtensionAPI) {
         const requestSignal = webSignal(signal);
         if (webProvider() === "parallel") {
           const { parallelTool } = await import("./parallel.ts");
+          requestSignal.throwIfAborted();
           return await parallelTool("web_search", {
             objective: query,
             search_queries: [query],

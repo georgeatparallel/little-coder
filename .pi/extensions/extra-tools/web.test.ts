@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import setup from "./index.ts";
 
 const endpoint = "https://search.parallel.ai/mcp";
@@ -9,9 +13,13 @@ let requests: Request[];
 
 function register(manager = SessionManager.inMemory()) {
   const tools = new Map<string, any>();
-  setup({ registerTool: (tool: any) => tools.set(tool.name, tool) } as any);
+  const context = new AsyncLocalStorage<SessionManager>();
+  setup({
+    registerTool: (tool: any) => tools.set(tool.name, tool),
+    appendEntry: (type: string, data: unknown) => context.getStore()!.appendCustomEntry(type, data),
+  } as any);
   return (name: string, args: object, signal?: AbortSignal, activeManager = manager) =>
-    tools.get(name).execute("call", args, signal, undefined, { sessionManager: activeManager });
+    context.run(activeManager, () => tools.get(name).execute("call", args, signal, undefined, { sessionManager: activeManager }));
 }
 
 function mockMcp(result: object = { content: [{ type: "text", text: excerpt }] }) {
@@ -138,6 +146,44 @@ describe("registered web tools", () => {
     mockMcp({ content: [{ type: "text", text: "x".repeat(30_000) }] });
     expect((await register()("webfetch", { url: "https://example.com", prompt: "a".repeat(300) })).content[0].text).toHaveLength(25_000);
     expect(requests.find((r) => r.body?.method === "tools/call")?.body.params.arguments.objective).toHaveLength(200);
+  });
+
+  it("persists custom conversation UUIDs across resume/reload but isolates copied metadata in a new session", async () => {
+    mockMcp();
+    const dir = mkdtempSync(join(tmpdir(), "little-coder-web-resume-"));
+    try {
+      const path = join(dir, "session.jsonl");
+      writeFileSync(path, [
+        { type: "session", version: 3, id: "custom-label", timestamp: "2026-01-01T00:00:00.000Z", cwd: dir },
+        { type: "message", id: "seed", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: {
+          role: "assistant", content: [{ type: "text", text: "Ready" }], api: "openai-completions", provider: "fixture", model: "fixture",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "stop", timestamp: 0,
+        } },
+      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+      const manager = SessionManager.open(path);
+      const call = register(manager);
+      await call("websearch", { query: "first" });
+      const header = manager.getHeader();
+      const metadata = manager.getEntries().find((entry) => entry.type === "custom")!;
+      manager.setSessionFile(path);
+      expect(manager.getHeader()).not.toBe(header);
+      await call("webfetch", { url: "https://example.com" });
+      const reopened = SessionManager.open(path);
+      await register(reopened)("websearch", { query: "fresh extension after resume" });
+      manager.createBranchedSession(manager.getLeafId()!);
+      await call("websearch", { query: "forked conversation" });
+      // A copied entry from the old conversation must not identify a new header.
+      reopened.newSession({ id: "custom-label" });
+      reopened.appendCustomEntry((metadata as any).customType, (metadata as any).data);
+      await register(reopened)("websearch", { query: "new conversation" });
+      const args = requests.filter((r) => r.body?.method === "tools/call").map((r) => r.body.params.arguments);
+      expect(args[0].session_id).toBe(args[1].session_id);
+      expect(args[0].session_id).toBe(args[2].session_id);
+      expect(args[3].session_id).not.toBe(args[0].session_id);
+      expect(args[4].session_id).not.toBe(args[0].session_id);
+      expect(JSON.stringify(requests)).not.toContain("custom-label");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it("surfaces MCP errors and malformed content without a fallback", async () => {

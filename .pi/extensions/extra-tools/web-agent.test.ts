@@ -102,6 +102,8 @@ it("pi dispatches search then fetch and delivers the excerpts back to the model 
   expect(customCalls[0].arguments.session_id).toMatch(/^[0-9a-f-]{36}$/);
   expect(customCalls[0].arguments.session_id).toBe(customCalls[1].arguments.session_id);
   expect(JSON.stringify(calls)).not.toContain(b.manager.getSessionId());
+  const metadata = b.manager.getEntries().find((entry) => entry.type === "custom" && entry.customType === "little-coder:parallel-session");
+  expect(metadata?.type === "custom" && (metadata.data as any).id).toBe(customCalls[0].arguments.session_id);
 });
 
 it.each(["permission", "disabled"])("pi respects %s tool restrictions before making requests", async (mode) => {
