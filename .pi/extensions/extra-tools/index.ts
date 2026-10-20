@@ -1,4 +1,5 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import { globFiles, renderGlobOutcome } from "./glob.ts";
 
@@ -18,6 +19,18 @@ function webSignal(signal?: AbortSignal): AbortSignal {
 }
 
 export default function (pi: ExtensionAPI) {
+  const customSessionIds = new WeakMap<object, string>();
+  function parallelSessionId(ctx: ExtensionContext): string {
+    const header = ctx.sessionManager.getHeader();
+    if (!header) throw new Error("Cannot identify the current pi session");
+    // pi's default UUID survives resumes. Custom --session-id labels can contain
+    // personal text or exceed the MCP limit, so give those headers opaque IDs.
+    if (/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(header.id)) return header.id;
+    let id = customSessionIds.get(header);
+    if (!id) { id = randomUUID(); customSessionIds.set(header, id); }
+    return id;
+  }
+
   // ── glob ────────────────────────────────────────────────────────────────
   pi.registerTool({
     name: "glob",
@@ -72,7 +85,7 @@ export default function (pi: ExtensionAPI) {
           return await parallelTool("web_fetch", {
             urls: [url],
             ...(prompt ? { objective: prompt.slice(0, 200) } : {}),
-          }, ctx.sessionManager.getSessionId(), requestSignal);
+          }, parallelSessionId(ctx), requestSignal);
         }
         const res = await fetch(url, {
           headers: { "User-Agent": "little-coder/0.1" },
@@ -124,7 +137,7 @@ export default function (pi: ExtensionAPI) {
           return await parallelTool("web_search", {
             objective: query,
             search_queries: [query],
-          }, ctx.sessionManager.getSessionId(), requestSignal);
+          }, parallelSessionId(ctx), requestSignal);
         }
         const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
         const res = await fetch(url, {

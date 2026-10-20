@@ -17,7 +17,7 @@ afterEach(() => {
   vi.unstubAllGlobals(); vi.unstubAllEnvs();
 });
 
-async function createSession(excludeTools: string[] = []) {
+async function createSession(excludeTools: string[] = [], customId?: string) {
   const cwd = mkdtempSync(join(tmpdir(), "little-coder-web-"));
   dirs.push(cwd);
   const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
@@ -34,6 +34,7 @@ async function createSession(excludeTools: string[] = []) {
   });
   await loader.reload();
   const manager = SessionManager.inMemory(cwd);
+  if (customId) manager.newSession({ id: customId });
   const { session } = await createAgentSession({
     cwd, agentDir: cwd, modelRuntime, settingsManager, sessionManager: manager, resourceLoader: loader,
     model: modelRuntime.getModel("scripted-web-test", "scripted")!,
@@ -79,7 +80,7 @@ it("pi dispatches search then fetch and delivers the excerpts back to the model 
     const text = body.params.name === "web_search" ? "Node docs https://nodejs.org/api/" : "Extracted page: cancellation uses AbortSignal.";
     return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text }] } });
   }));
-  const a = await createSession(), b = await createSession();
+  const a = await createSession(), b = await createSession([], "custom-session-label-".repeat(10));
   for (const { session } of [a, b]) {
     script(session, (context, turn) => {
       const results = context.messages.filter((m: any) => m.role === "toolResult");
@@ -94,11 +95,13 @@ it("pi dispatches search then fetch and delivers the excerpts back to the model 
   }
   await Promise.all([a.session.prompt("Find current Node documentation"), b.session.prompt("Find current Node documentation")]);
   expect(calls).toHaveLength(4);
-  for (const { manager } of [a, b]) {
-    const own = calls.filter((c) => c.arguments.session_id === manager.getSessionId());
-    expect(own.map((c) => c.name)).toEqual(["web_search", "web_fetch"]);
-  }
-  expect(a.manager.getSessionId()).not.toBe(b.manager.getSessionId());
+  const defaultCalls = calls.filter((c) => c.arguments.session_id === a.manager.getSessionId());
+  const customCalls = calls.filter((c) => c.arguments.session_id !== a.manager.getSessionId());
+  expect(defaultCalls.map((c) => c.name)).toEqual(["web_search", "web_fetch"]);
+  expect(customCalls.map((c) => c.name)).toEqual(["web_search", "web_fetch"]);
+  expect(customCalls[0].arguments.session_id).toMatch(/^[0-9a-f-]{36}$/);
+  expect(customCalls[0].arguments.session_id).toBe(customCalls[1].arguments.session_id);
+  expect(JSON.stringify(calls)).not.toContain(b.manager.getSessionId());
 });
 
 it.each(["permission", "disabled"])("pi respects %s tool restrictions before making requests", async (mode) => {

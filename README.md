@@ -339,7 +339,8 @@ from pages, with no account or API key required. `webfetch`'s optional `prompt`
 focuses those excerpts (up to 200 characters). Responses are capped at 25K
 characters. Anonymous usage has service rate limits; errors are reported without
 silently switching providers. Queries and fetched URLs are sent to Parallel when
-you select it. Requests honor cancellation and a 30-second deadline.
+you select it. Requests use an opaque conversation UUID, honor cancellation and
+a 30-second deadline. Custom pi session labels are never sent to Parallel.
 
 Leave the variable unset, or set it to `duckduckgo`, to use the original tools.
 The same setting is inherited by research sub-coders; existing tool permissions

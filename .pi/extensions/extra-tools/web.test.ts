@@ -10,8 +10,8 @@ let requests: Request[];
 function register(manager = SessionManager.inMemory()) {
   const tools = new Map<string, any>();
   setup({ registerTool: (tool: any) => tools.set(tool.name, tool) } as any);
-  return (name: string, args: object, signal?: AbortSignal) =>
-    tools.get(name).execute("call", args, signal, undefined, { sessionManager: manager });
+  return (name: string, args: object, signal?: AbortSignal, activeManager = manager) =>
+    tools.get(name).execute("call", args, signal, undefined, { sessionManager: activeManager });
 }
 
 function mockMcp(result: object = { content: [{ type: "text", text: excerpt }] }) {
@@ -106,6 +106,32 @@ describe("registered web tools", () => {
       expect((await register()("webfetch", { url })).isError).toBe(true);
     }
     expect(requests).toHaveLength(0);
+  });
+
+  it("replaces custom/long session labels with opaque IDs owned by each conversation header", async () => {
+    mockMcp();
+    const a = SessionManager.inMemory(), b = SessionManager.inMemory();
+    const label = "personal-session-label-".repeat(10);
+    a.newSession({ id: label }); b.newSession({ id: label });
+    const call = register(a);
+    await Promise.all([
+      call("websearch", { query: "A" }),
+      call("websearch", { query: "B" }, undefined, b),
+    ]);
+    await call("webfetch", { url: "https://example.com" });
+    await call("websearch", { query: "A follow-up" });
+    a.newSession({ id: label });
+    await call("websearch", { query: "reset A" });
+    const args = requests.filter((r) => r.body?.method === "tools/call").map((r) => r.body.params.arguments);
+    const idA = args.find((x) => x.objective === "A").session_id;
+    const idB = args.find((x) => x.objective === "B").session_id;
+    expect(idA).toMatch(/^[0-9a-f-]{36}$/);
+    expect(idB).toMatch(/^[0-9a-f-]{36}$/);
+    expect(idA).not.toBe(idB);
+    expect(args.find((x) => x.urls).session_id).toBe(idA);
+    expect(args.find((x) => x.objective === "A follow-up").session_id).toBe(idA);
+    expect(args.at(-1).session_id).not.toBe(idA);
+    expect(JSON.stringify(requests)).not.toContain(label);
   });
 
   it("caps excerpts and fetch objectives", async () => {
