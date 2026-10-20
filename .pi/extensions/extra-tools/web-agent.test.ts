@@ -80,7 +80,7 @@ it("pi dispatches search then fetch and delivers the excerpts back to the model 
     const text = body.params.name === "web_search" ? "Node docs https://nodejs.org/api/" : "Extracted page: cancellation uses AbortSignal.";
     return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text }] } });
   }));
-  const a = await createSession(), b = await createSession([], "custom-session-label-".repeat(10));
+  const a = await createSession(), b = await createSession([], "custom-session-label-".repeat(10) + "end");
   for (const { session } of [a, b]) {
     script(session, (context, turn) => {
       const results = context.messages.filter((m: any) => m.role === "toolResult");

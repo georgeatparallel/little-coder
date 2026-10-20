@@ -111,7 +111,7 @@ describe("registered web tools", () => {
   it("replaces custom/long session labels with opaque IDs owned by each conversation header", async () => {
     mockMcp();
     const a = SessionManager.inMemory(), b = SessionManager.inMemory();
-    const label = "personal-session-label-".repeat(10);
+    const label = "personal-session-label-".repeat(10) + "end";
     a.newSession({ id: label }); b.newSession({ id: label });
     const call = register(a);
     await Promise.all([

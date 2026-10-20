@@ -25,7 +25,7 @@ export default function (pi: ExtensionAPI) {
     if (!header) throw new Error("Cannot identify the current pi session");
     // pi's default UUID survives resumes. Custom --session-id labels can contain
     // personal text or exceed the MCP limit, so give those headers opaque IDs.
-    if (/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(header.id)) return header.id;
+    if (/^[\da-f]{8}-[\da-f]{4}-[47][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(header.id)) return header.id;
     let id = customSessionIds.get(header);
     if (!id) { id = randomUUID(); customSessionIds.set(header, id); }
     return id;
